@@ -18,7 +18,7 @@ import cv2
 # is run from (no hardcoded absolute paths).
 sys.path.append(str(Path(__file__).resolve().parent))
 
-from camera import Camera, CameraError
+from backend.app.utils.camera import Camera, CameraError
 
 
 def main():

@@ -1,0 +1,8 @@
+{
+  "total_images_processed": 145,
+  "successful_detections": 109,
+  "no_hand_detected": 36,
+  "unreadable_or_corrupted": 0,
+  "success_percentage": 75.17,
+  "csv_file": "D:\\SignLanguagePlatform\\backend\\data\\landmarks.csv"
+}
