@@ -4,3 +4,6 @@ captures/
 project_snapshot.zip
 __pycache__/
 *.pyc
+scripts/landmarks_dataset.csv
+scripts/landmarks_dataset_normalized.csv
+backend/data/*.csv
