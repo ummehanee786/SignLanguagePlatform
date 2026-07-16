@@ -1,5 +1,6 @@
 datasets/
 venv/
 captures/
+project_snapshot.zip
 __pycache__/
 *.pyc
