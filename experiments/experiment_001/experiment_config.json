@@ -1,0 +1,12 @@
+{
+  "experiment_id": "experiment_001",
+  "dataset_version": "asl_alphabet_full_v1",
+  "feature_version": "landmarks_normalized_v1",
+  "model_used": "RandomForestClassifier",
+  "parameters": {
+    "n_estimators": 100,
+    "random_state": 42
+  },
+  "date": "2026-07-22",
+  "engineer_name": "T L UMME HANEE"
+}
