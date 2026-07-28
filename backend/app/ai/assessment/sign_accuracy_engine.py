@@ -24,11 +24,18 @@ landmark-level deviation analysis (FingerExtension, ThumbExtension, etc.)
 and enriches the FeedbackObject with structured correction messages.
 """
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from app.schemas.prediction import PredictionResponse
 from app.ai.assessment.models import AssessmentRecord, FeedbackObject
 from app.ai.feedback.feedback_engine import GestureFeedbackEngine
+from app.ai.assessment.motion_metrics import (
+    GestureFrameRecord,
+    average_confidence,
+    gesture_stability,
+    invalid_frames_before_valid,
+    overall_sign_score,
+)
 
 # Letter pairs known (from error_analysis.md, Task 4 of the earlier ML
 # study on this exact trained model) to be genuinely hard to
@@ -88,6 +95,7 @@ class SignAccuracyAssessmentEngine:
         attempt_number: int,
         time_taken_seconds: float,
         session_accuracy: float,
+        motion_records: Optional[List[GestureFrameRecord]] = None,
     ) -> Tuple[AssessmentRecord, FeedbackObject]:
         """
         Precondition: `prediction.success` must be True - a failed
@@ -95,11 +103,38 @@ class SignAccuracyAssessmentEngine:
         compare against anything and shouldn't reach this engine at
         all; the caller (assessment_service.submit_attempt) is
         responsible for filtering those out before calling assess().
+
+        `motion_records` is the optional per-frame capture window from
+        MotionCaptureSession.records() (see
+        app/services/motion_capture_service.py) - built from frames
+        streamed via POST /practice/{session_id}/stream-frame WHILE the
+        student held the sign, before this single graded frame was
+        submitted. When absent (a caller that never streamed frames),
+        the motion-based fields degrade to None/best-effort rather than
+        raising - this engine still works exactly as before.
         """
         assert prediction.success, "assess() requires a successful prediction - filter failures upstream"
 
         predicted_gesture = prediction.predicted_class
         correct = predicted_gesture.upper() == expected_gesture.upper()
+
+        # --- Motion-based metrics (Task 2) ---
+        stability = gesture_stability(motion_records) if motion_records else None
+        invalid_before_valid = (
+            invalid_frames_before_valid(motion_records) if motion_records else None
+        )
+        avg_confidence_over_gesture = (
+            average_confidence(motion_records) if motion_records else None
+        )
+        # Overall sign score doesn't require a capture window - it always
+        # has correctness/confidence/timing to work with; stability is
+        # folded in only when a window was actually captured.
+        sign_score = overall_sign_score(
+            handshape_correct=correct,
+            confidence=prediction.confidence,
+            time_taken_seconds=time_taken_seconds,
+            stability=stability,
+        )
 
         # Build a preliminary AssessmentRecord (without final gesture_accuracy
         # yet — we compute that after recording) so _build_feedback has all
@@ -117,6 +152,10 @@ class SignAccuracyAssessmentEngine:
             student_id=student_id,
             session_id=session_id,
             probabilities=prediction.probabilities,
+            gesture_stability=stability,
+            invalid_frames_before_valid=invalid_before_valid,
+            average_confidence_over_gesture=avg_confidence_over_gesture,
+            overall_sign_score=sign_score,
         )
 
         # Build feedback using landmarks so it can be stored with the attempt.
@@ -151,6 +190,10 @@ class SignAccuracyAssessmentEngine:
             student_id=student_id,
             session_id=session_id,
             probabilities=prediction.probabilities,
+            gesture_stability=stability,
+            invalid_frames_before_valid=invalid_before_valid,
+            average_confidence_over_gesture=avg_confidence_over_gesture,
+            overall_sign_score=sign_score,
         )
         # Update the record's gesture_accuracy to the real value now that
         # the attempt has been recorded and counted.

@@ -5,9 +5,11 @@ from app.services.session_service import SessionService
 from app.services.gesture_service import GestureService
 from app.services.progress_service import get_progress_service
 from app.services.assessment_service import AssessmentService
+from app.services.motion_capture_service import get_motion_capture_manager
 from app.ai.assessment.sign_accuracy_engine import SignAccuracyAssessmentEngine
 from app.schemas.practice import StartPracticeResponse, AttemptResponse, EndPracticeResponse
 from app.schemas.session_review import SessionReviewResponse
+from app.schemas.stream_frame import StreamFrameResponse, SequenceResponse
 
 router = APIRouter()
 
@@ -15,8 +17,10 @@ _lesson_service = LessonService()
 _session_service = SessionService()
 _gesture_service = GestureService()
 _assessment_engine = SignAccuracyAssessmentEngine(get_progress_service())
+_motion_capture_manager = get_motion_capture_manager()
 assessment_service = AssessmentService(
-    _lesson_service, _session_service, _gesture_service, _assessment_engine
+    _lesson_service, _session_service, _gesture_service, _assessment_engine,
+    _motion_capture_manager,
 )
 
 
@@ -36,6 +40,77 @@ def start_practice(lesson_id: int, student_id: str, auto_next: bool = True):
     if result is None:
         raise HTTPException(status_code=404, detail=f"Lesson {lesson_id} not found")
     return result
+
+
+@router.post("/practice/{session_id}/stream-frame", response_model=StreamFrameResponse)
+async def stream_frame(session_id: str, file: UploadFile = File(...)):
+    """
+    Task 1: continuous webcam capture. The client is expected to call
+    this repeatedly (e.g. every ~100ms) WHILE the student holds a sign,
+    BEFORE calling /attempt to actually grade it - each call is one
+    webcam frame.
+
+    Each frame runs through the exact same detection + prediction
+    pipeline /attempt uses (GestureService) and is folded into this
+    session's rolling window of the last 20-30 frames (oldest
+    automatically discarded once full) - both the raw landmark
+    sequence (exposed via GET /practice/{session_id}/sequence, for any
+    future temporal model) and the per-frame validity/confidence log
+    Task 2's motion-based metrics are computed from when /attempt is
+    next called.
+
+    Frames with no usable hand detection are still counted (so Task
+    2's "invalid frames before a valid prediction" can see them) but
+    are never added to the landmark sequence itself.
+    """
+    session = _session_service.get_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+
+    image_bytes = await file.read()
+    prediction = _gesture_service.predict(image_bytes)
+
+    capture = _motion_capture_manager.get_or_create(session_id)
+    capture.add_prediction(prediction)
+
+    return {
+        "session_id": session_id,
+        "buffered_frames": len(capture),
+        "buffer_full": capture.is_full(),
+        "frame_valid": prediction.success,
+    }
+
+
+@router.get("/practice/{session_id}/sequence", response_model=SequenceResponse)
+def get_sequence(session_id: str):
+    """
+    Task 1 deliverable: exposes the CURRENT buffered landmark sequence
+    for this session, in the exact shape a future temporal model
+    (LSTM/GRU/Transformer) would be called with - a list of frames,
+    each a 63-value normalized landmark vector, oldest first.
+
+    Returns an empty sequence (not a 404) if nothing has been streamed
+    yet for this session - "hasn't started capturing" isn't an error,
+    just an empty window.
+    """
+    capture = _motion_capture_manager.get(session_id)
+    if capture is None:
+        return {
+            "session_id": session_id,
+            "frame_count": 0,
+            "max_frames": 0,
+            "is_full": False,
+            "sequence": [],
+        }
+
+    frames = capture.sequence_buffer.frames()
+    return {
+        "session_id": session_id,
+        "frame_count": len(frames),
+        "max_frames": capture.sequence_buffer.max_frames,
+        "is_full": capture.is_full(),
+        "sequence": [frame.tolist() for frame in frames],
+    }
 
 
 @router.post("/practice/{session_id}/attempt", response_model=AttemptResponse)

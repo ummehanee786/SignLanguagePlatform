@@ -41,6 +41,14 @@ class AssessmentRecordSchema(BaseModel):
     student_id: Optional[str] = None
     session_id: Optional[str] = None
     probabilities: Optional[Dict[str, float]] = None
+    # Task 2: motion-based metrics - populated only when frames were
+    # streamed via /practice/{session_id}/stream-frame before this
+    # attempt; None otherwise (a caller that only calls /attempt still
+    # gets a normal response, just without these).
+    gesture_stability: Optional[float] = None
+    invalid_frames_before_valid: Optional[int] = None
+    average_confidence_over_gesture: Optional[float] = None
+    overall_sign_score: Optional[float] = None
     timestamp: str
 
 

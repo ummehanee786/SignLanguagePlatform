@@ -39,6 +39,14 @@ class AssessmentRecord:
     student_id: Optional[str] = None
     session_id: Optional[str] = None
     probabilities: Optional[Dict[str, float]] = None
+    # --- Motion-based metrics (Task 2) - populated only when the caller
+    # streamed frames via /practice/{session_id}/stream-frame before this
+    # attempt; None if no capture window was available for this attempt,
+    # so older/simpler callers keep working unchanged. ---
+    gesture_stability: Optional[float] = None            # 0-100, higher = steadier hold
+    invalid_frames_before_valid: Optional[int] = None     # frames before the hand was usable
+    average_confidence_over_gesture: Optional[float] = None  # mean confidence across the capture window
+    overall_sign_score: Optional[float] = None            # 0-100, combines accuracy + confidence + timing
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict:

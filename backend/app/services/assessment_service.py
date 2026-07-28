@@ -28,6 +28,7 @@ from typing import Optional
 from app.content.lesson_service import LessonService
 from app.services.session_service import SessionService
 from app.services.gesture_service import GestureService
+from app.services.motion_capture_service import MotionCaptureManager, get_motion_capture_manager
 from app.ai.assessment.sign_accuracy_engine import SignAccuracyAssessmentEngine
 
 
@@ -38,11 +39,18 @@ class AssessmentService:
         session_service: SessionService,
         gesture_service: GestureService,
         assessment_engine: SignAccuracyAssessmentEngine,
+        motion_capture_manager: Optional[MotionCaptureManager] = None,
     ):
         self._lesson_service = lesson_service
         self._session_service = session_service
         self._gesture_service = gesture_service
         self._assessment_engine = assessment_engine
+        # Task 1/2: the rolling per-session frame window built from
+        # POST /practice/{session_id}/stream-frame calls (if the caller
+        # made any) - defaults to the shared singleton so this service
+        # sees the SAME buffers that endpoint fills, without every
+        # caller needing to wire it through by hand.
+        self._motion_capture_manager = motion_capture_manager or get_motion_capture_manager()
 
     def start_practice(
         self, lesson_id: int, student_id: str, auto_next: bool = True
@@ -89,6 +97,12 @@ class AssessmentService:
         time_taken_seconds = self._session_service.time_since_lesson_shown(session)
         attempt_number = session["attempts"] + 1  # this attempt, about to be recorded
 
+        # Task 1/2: whatever was streamed via /stream-frame while the
+        # student held this sign (may be None/empty if they never
+        # streamed anything - assess() degrades gracefully either way).
+        capture = self._motion_capture_manager.get(session_id)
+        motion_records = capture.records() if capture is not None else None
+
         # Gesture Comparison -> Accuracy Score Calculation -> Assessment
         # Result -> Feedback Object -> stored as an Assessment Record
         record, feedback = self._assessment_engine.assess(
@@ -101,7 +115,14 @@ class AssessmentService:
             # session_accuracy computed AFTER this attempt is folded in below,
             # so pass a placeholder for now and overwrite the record's copy.
             session_accuracy=0.0,
+            motion_records=motion_records,
         )
+
+        # This attempt has been graded - reset the capture window so the
+        # NEXT gesture (whether that's a retry of this letter or the
+        # next one) starts with a clean window instead of blending in
+        # frames from the sign that was just judged.
+        self._motion_capture_manager.reset(session_id)
 
         session = self._session_service.record_attempt(session_id, correct=record.correct)
         record.session_accuracy = self._session_service.session_accuracy(session)
@@ -137,6 +158,11 @@ class AssessmentService:
         session = self._session_service.end_session(session_id)
         if session is None:
             return None
+
+        # No more attempts coming for this session - drop its capture
+        # window entirely rather than just clearing it, so it doesn't
+        # sit in memory indefinitely for a session that's now over.
+        self._motion_capture_manager.remove(session_id)
 
         duration = None
         if session["end_time"] is not None and session["start_time"] is not None:
