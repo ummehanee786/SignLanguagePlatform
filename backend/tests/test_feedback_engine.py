@@ -180,7 +180,7 @@ class TestFeedbackEngineRuleInjection:
             existing_message="Wrong.",
         )
         assert len(fb.deviations) == 1
-        assert fb.deviations[0]["rule_name"] == "always"
+        assert fb.deviations[0].rule_name == "always"
         assert "Always fires" in fb.correction_messages[0]
 
     def test_empty_rules_list_returns_existing(self):
