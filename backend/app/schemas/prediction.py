@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -34,3 +34,6 @@ class PredictionResponse(BaseModel):
     error: Optional[str] = None
     model_version: Optional[str] = None
     processing_time: float
+    # Raw 21-landmark flat array (63 floats) from MediaPipe.
+    # Populated on successful predictions; None when no hand was detected.
+    landmarks: Optional[List[float]] = None

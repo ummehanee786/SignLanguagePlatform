@@ -7,6 +7,7 @@ from app.services.progress_service import get_progress_service
 from app.services.assessment_service import AssessmentService
 from app.ai.assessment.sign_accuracy_engine import SignAccuracyAssessmentEngine
 from app.schemas.practice import StartPracticeResponse, AttemptResponse, EndPracticeResponse
+from app.schemas.session_review import SessionReviewResponse
 
 router = APIRouter()
 
@@ -61,4 +62,32 @@ def end_practice(session_id: str):
     result = assessment_service.end_practice(session_id)
     if result is None:
         raise HTTPException(status_code=404, detail=f"Session {session_id} not found")
+    return result
+
+
+@router.get("/practice/{session_id}/review", response_model=SessionReviewResponse)
+def get_session_review(session_id: str, student_id: str):
+    """
+    Returns a comprehensive post-session review once a practice session ends
+    (or at any point during it).  Includes:
+
+      - overall_score, total/correct/incorrect attempt counts
+      - correct_gestures / incorrect_gestures (distinct letter lists)
+      - confidence_trend: per-attempt confidence values for charting
+      - most_common_mistakes: top-5 (expected, predicted) error pairs by count
+      - gesture_feedback: per-letter attempt stats + last feedback message/tip
+      - recommended_gestures: up to 5 weakest lifetime gestures to practise next
+
+    `student_id` must match the one used to start the session.
+    """
+    result = get_progress_service().get_session_review(student_id, session_id)
+    if result is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"No attempts found for session '{session_id}' "
+                f"and student '{student_id}'. "
+                f"Submit at least one attempt before requesting a review."
+            ),
+        )
     return result

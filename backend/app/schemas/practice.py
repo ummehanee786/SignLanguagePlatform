@@ -1,4 +1,4 @@
-from typing import Optional, Dict
+from typing import Dict, List, Optional
 
 from pydantic import BaseModel
 
@@ -49,6 +49,9 @@ class FeedbackObjectSchema(BaseModel):
     message: str
     tip: Optional[str] = None
     severity: str = "info"
+    # Landmark-level corrections from GestureFeedbackEngine
+    deviations: List[dict] = []
+    correction_messages: List[str] = []
 
 
 class AttemptResponse(BaseModel):

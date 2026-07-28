@@ -17,7 +17,7 @@ API layer converts these into whatever response shape it needs.
 
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
-from typing import Optional, Dict
+from typing import List, Optional, Dict
 
 
 @dataclass
@@ -58,6 +58,10 @@ class FeedbackObject:
     message: str
     tip: Optional[str] = None
     severity: str = "info"  # "success" | "info" | "warning" - a UI styling hint
+    # Landmark-level correction details from GestureFeedbackEngine.
+    # Empty for correct predictions or when landmarks aren't available.
+    deviations: List[dict] = field(default_factory=list)
+    correction_messages: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)

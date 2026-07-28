@@ -57,4 +57,5 @@ class GestureService:
             error=result.error,
             model_version=result.model_version,
             processing_time=(result.total_time_ms or 0.0) / 1000.0,  # ms -> seconds
+            landmarks=result.landmarks,
         )

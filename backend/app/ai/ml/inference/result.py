@@ -22,7 +22,7 @@ Two ways to end up with a PredictionResult:
 
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -37,6 +37,11 @@ class PredictionResult:
 
     # Populated when success=False
     error: Optional[str] = None
+
+    # Raw 21-landmark flat array (63 floats: x0,y0,z0 … x20,y20,z20) from
+    # MediaPipe, passed through so downstream consumers (e.g. the Feedback
+    # Engine) can inspect hand shape without re-running detection.
+    landmarks: Optional[List[float]] = None
 
     # Always populated - inference metadata, useful for logging/monitoring
     # regardless of whether the prediction itself succeeded.
@@ -73,6 +78,7 @@ class PredictionResult:
         model_version: str,
         model_inference_time_ms: float,
         total_time_ms: float,
+        landmarks: Optional[List[float]] = None,
     ) -> "PredictionResult":
         return cls(
             success=True,
@@ -83,4 +89,5 @@ class PredictionResult:
             model_version=model_version,
             model_inference_time_ms=model_inference_time_ms,
             total_time_ms=total_time_ms,
+            landmarks=landmarks,
         )

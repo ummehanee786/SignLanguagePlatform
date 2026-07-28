@@ -146,6 +146,7 @@ class GestureRecognitionEngine:
                 model_version=self.model_version,
                 model_inference_time_ms=round(model_time_ms, 4),
                 total_time_ms=round(total_time_ms, 4),
+                landmarks=landmarks,
             )
 
         except Exception as e:

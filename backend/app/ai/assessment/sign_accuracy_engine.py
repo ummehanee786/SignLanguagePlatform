@@ -18,12 +18,17 @@ bare prediction:
 This keeps Live Prediction and Gesture Comparison as separate,
 independently-testable concerns, matching the SRS diagram's own
 separation of boxes.
+
+Sprint update: the engine now also calls GestureFeedbackEngine to perform
+landmark-level deviation analysis (FingerExtension, ThumbExtension, etc.)
+and enriches the FeedbackObject with structured correction messages.
 """
 
 from typing import Optional, Tuple
 
 from app.schemas.prediction import PredictionResponse
 from app.ai.assessment.models import AssessmentRecord, FeedbackObject
+from app.ai.feedback.feedback_engine import GestureFeedbackEngine
 
 # Letter pairs known (from error_analysis.md, Task 4 of the earlier ML
 # study on this exact trained model) to be genuinely hard to
@@ -65,10 +70,14 @@ class SignAccuracyAssessmentEngine:
     (via ProgressService) - "store the result as an Assessment Record,
     not just a prediction" is exactly what record_attempt() +
     get_gesture_accuracy() together accomplish.
+
+    From this sprint: also calls GestureFeedbackEngine to enrich the
+    FeedbackObject with landmark-level deviation corrections.
     """
 
     def __init__(self, progress_service):
         self._progress_service = progress_service
+        self._feedback_engine = GestureFeedbackEngine()
 
     def assess(
         self,
@@ -92,10 +101,29 @@ class SignAccuracyAssessmentEngine:
         predicted_gesture = prediction.predicted_class
         correct = predicted_gesture.upper() == expected_gesture.upper()
 
-        # Store the attempt FIRST, so gesture_accuracy below reflects
-        # this attempt too (a student's dashboard/report should always
-        # be able to say "as of your most recent attempt, here's how
-        # you're doing on this letter").
+        # Build a preliminary AssessmentRecord (without final gesture_accuracy
+        # yet — we compute that after recording) so _build_feedback has all
+        # the data it needs but gesture_accuracy is a placeholder.
+        preliminary_record = AssessmentRecord(
+            expected_gesture=expected_gesture.upper(),
+            predicted_gesture=predicted_gesture.upper(),
+            correct=correct,
+            confidence=round(prediction.confidence, 4),
+            gesture_accuracy=0.0,   # placeholder; updated below
+            attempt_number=attempt_number,
+            time_taken_seconds=round(time_taken_seconds, 2),
+            session_accuracy=session_accuracy,
+            model_version=prediction.model_version,
+            student_id=student_id,
+            session_id=session_id,
+            probabilities=prediction.probabilities,
+        )
+
+        # Build feedback using landmarks so it can be stored with the attempt.
+        feedback = self._build_feedback(preliminary_record, landmarks=prediction.landmarks)
+
+        # Store the attempt (including feedback message) so gesture_accuracy
+        # below reflects this attempt too.
         self._progress_service.record_attempt(
             student_id=student_id,
             alphabet_practiced=expected_gesture,
@@ -105,6 +133,8 @@ class SignAccuracyAssessmentEngine:
             inference_time=prediction.processing_time,
             time_taken_seconds=time_taken_seconds,
             session_id=session_id,
+            feedback_message=feedback.message,
+            feedback_tip=feedback.tip,
         )
         gesture_accuracy = self._progress_service.get_gesture_accuracy(student_id, expected_gesture)
 
@@ -122,11 +152,16 @@ class SignAccuracyAssessmentEngine:
             session_id=session_id,
             probabilities=prediction.probabilities,
         )
-
-        feedback = self._build_feedback(record)
+        # Update the record's gesture_accuracy to the real value now that
+        # the attempt has been recorded and counted.
+        record.gesture_accuracy = gesture_accuracy
         return record, feedback
 
-    def _build_feedback(self, record: AssessmentRecord) -> FeedbackObject:
+    def _build_feedback(
+        self,
+        record: AssessmentRecord,
+        landmarks: Optional[list] = None,
+    ) -> FeedbackObject:
         motion_note = (
             f" Note: '{record.expected_gesture}' is traditionally a motion-based "
             f"sign in ASL, but this assessment only sees a single still frame - "
@@ -135,45 +170,56 @@ class SignAccuracyAssessmentEngine:
             else ""
         )
 
+        # --- Build base message and tip (same logic as before) ---
         if record.correct:
             if record.confidence >= HIGH_CONFIDENCE_THRESHOLD:
-                return FeedbackObject(
-                    message=f"Correct! Your '{record.expected_gesture}' was recognized clearly.",
-                    severity="success",
-                    tip=motion_note or None,
-                )
-            return FeedbackObject(
-                message=(
+                base_message = f"Correct! Your '{record.expected_gesture}' was recognized clearly."
+                base_tip = motion_note or None
+                severity = "success"
+            else:
+                base_message = (
                     f"Correct, but the model wasn't fully confident "
                     f"({record.confidence:.0%})."
-                ),
-                tip=("Try holding the sign a bit more clearly, with your whole "
-                     "hand visible and well-lit." + motion_note),
-                severity="success",
-            )
+                )
+                base_tip = (
+                    "Try holding the sign a bit more clearly, with your whole "
+                    "hand visible and well-lit." + motion_note
+                )
+                severity = "success"
+        else:
+            pair_tip = None
+            if record.predicted_gesture:
+                pair_tip = _CONFUSABLE_PAIR_TIPS.get(
+                    frozenset({record.expected_gesture, record.predicted_gesture})
+                )
 
-        pair_tip = None
-        if record.predicted_gesture:
-            pair_tip = _CONFUSABLE_PAIR_TIPS.get(
-                frozenset({record.expected_gesture, record.predicted_gesture})
-            )
-
-        if pair_tip:
-            return FeedbackObject(
-                message=(
-                    f"Not quite - expected '{record.expected_gesture}' but "
-                    f"detected '{record.predicted_gesture}'."
-                ),
-                tip=pair_tip + motion_note,
-                severity="warning",
-            )
-
-        return FeedbackObject(
-            message=(
+            base_message = (
                 f"Not quite - expected '{record.expected_gesture}' but "
                 f"detected '{record.predicted_gesture}'."
-            ),
-            tip=(f"Review the reference image for '{record.expected_gesture}' "
-                 f"and try again." + motion_note),
-            severity="warning",
+            )
+            if pair_tip:
+                base_tip = pair_tip + motion_note
+            else:
+                base_tip = (
+                    f"Review the reference image for '{record.expected_gesture}' "
+                    f"and try again." + motion_note
+                )
+            severity = "warning"
+
+        # --- Enrich with landmark-level deviations via GestureFeedbackEngine ---
+        detailed = self._feedback_engine.evaluate(
+            expected=record.expected_gesture,
+            predicted=record.predicted_gesture or "",
+            landmarks=landmarks,
+            existing_message=base_message,
+            existing_tip=base_tip,
+            severity=severity,
+        )
+
+        return FeedbackObject(
+            message=detailed.overall_message,
+            tip=detailed.tip,
+            severity=detailed.severity,
+            deviations=[d.to_dict() if hasattr(d, "to_dict") else d for d in detailed.deviations],
+            correction_messages=detailed.correction_messages,
         )
