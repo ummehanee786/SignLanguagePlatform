@@ -6,8 +6,33 @@ mediapipe. Everything else (services, routers, schemas) must go through
 this class instead of touching those libraries directly.
 """
 
+from typing import Optional
+
 import cv2
+import numpy as np
 import mediapipe as mp
+
+
+def decode_image(image_bytes: bytes) -> Optional[np.ndarray]:
+    """
+    Decodes raw image bytes (e.g. straight from an UploadFile in a
+    FastAPI route) into a BGR frame, the same shape/format
+    HandLandmarkDetector.extract_landmarks() expects.
+
+    This exists so that nothing outside this file ever needs to import
+    cv2 just to turn an uploaded file's bytes into a usable frame -
+    api/predict.py and gesture_service.py stay cv2-free and only pass
+    raw bytes around.
+
+    Returns None if the bytes couldn't be decoded as an image (corrupt
+    upload, wrong file type, etc.) instead of raising - callers should
+    treat None the same way they'd treat "no hand detected".
+    """
+    if not image_bytes:
+        return None
+    array = np.frombuffer(image_bytes, dtype=np.uint8)
+    frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
+    return frame  # None if decoding failed
 
 
 class HandLandmarkDetector:
@@ -54,6 +79,39 @@ class HandLandmarkDetector:
         for lm in hand_landmarks.landmark:
             values.extend([lm.x, lm.y, lm.z])
         return values
+
+    def extract_landmarks_with_metadata(self, frame) -> dict:
+        """
+        Same underlying detection as extract_landmarks(), but also
+        reports how many hands were actually seen in the frame - used
+        by the inference engine to explicitly reject multi-hand frames
+        instead of silently picking one hand and discarding the rest.
+
+        Note: for this to actually be able to *see* a second hand, the
+        detector instance calling this method needs to have been
+        constructed with max_num_hands >= 2 - extract_landmarks() (used
+        for single-hand dataset building) intentionally uses
+        max_num_hands=1 and would never observe a second hand even if
+        one were present, which is correct for that use case but wrong
+        for this one.
+
+        Returns:
+            {
+                "hand_count": int,
+                "landmarks": list[float] | None,  # first hand's 63 values, if any
+            }
+        """
+        multi_hand_landmarks = self.process(frame)
+        hand_count = len(multi_hand_landmarks) if multi_hand_landmarks else 0
+
+        landmarks = None
+        if hand_count >= 1:
+            values = []
+            for lm in multi_hand_landmarks[0].landmark:
+                values.extend([lm.x, lm.y, lm.z])
+            landmarks = values
+
+        return {"hand_count": hand_count, "landmarks": landmarks}
 
     def draw_landmarks(self, frame, hand_landmarks):
         """Draws the 21 landmarks + connections onto frame, in place."""

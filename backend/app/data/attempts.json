@@ -1,0 +1,72 @@
+[
+  {
+    "student_id": " test",
+    "session_id": "03f00be2-4e9f-40f1-9b51-b8993cb381c9",
+    "alphabet_practiced": "A",
+    "predicted_alphabet": "H",
+    "correct": false,
+    "confidence": 0.9,
+    "inference_time": 0.11884499999999999,
+    "timestamp": "2026-07-26T05:46:33.807237+00:00"
+  },
+  {
+    "student_id": " test",
+    "session_id": "03f00be2-4e9f-40f1-9b51-b8993cb381c9",
+    "alphabet_practiced": "A",
+    "predicted_alphabet": "H",
+    "correct": false,
+    "confidence": 0.9,
+    "inference_time": 0.0585582,
+    "timestamp": "2026-07-26T05:46:35.885648+00:00"
+  },
+  {
+    "student_id": " test",
+    "session_id": "03f00be2-4e9f-40f1-9b51-b8993cb381c9",
+    "alphabet_practiced": "A",
+    "predicted_alphabet": "H",
+    "correct": false,
+    "confidence": 0.9,
+    "inference_time": 0.08301789999999999,
+    "timestamp": "2026-07-26T05:46:39.748888+00:00"
+  },
+  {
+    "student_id": "test",
+    "session_id": "e413432b-4a7e-4d92-965d-f72cb81d3092",
+    "alphabet_practiced": "A",
+    "predicted_alphabet": "H",
+    "correct": false,
+    "confidence": 0.9,
+    "inference_time": 0.0837409,
+    "timestamp": "2026-07-26T05:58:33.518155+00:00"
+  },
+  {
+    "student_id": "test",
+    "session_id": "a5b34083-ac59-4572-b9fe-bf46bc5b13f0",
+    "alphabet_practiced": "A",
+    "predicted_alphabet": "F",
+    "correct": false,
+    "confidence": 1.0,
+    "inference_time": 0.0931931,
+    "timestamp": "2026-07-26T06:09:44.708115+00:00"
+  },
+  {
+    "student_id": "test",
+    "session_id": "a5b34083-ac59-4572-b9fe-bf46bc5b13f0",
+    "alphabet_practiced": "A",
+    "predicted_alphabet": "F",
+    "correct": false,
+    "confidence": 1.0,
+    "inference_time": 0.053890900000000005,
+    "timestamp": "2026-07-26T06:10:44.844055+00:00"
+  },
+  {
+    "student_id": "test",
+    "session_id": "3e26f9d2-23ba-4a2e-a410-1a1e79f6f7a6",
+    "alphabet_practiced": "F",
+    "predicted_alphabet": "F",
+    "correct": true,
+    "confidence": 1.0,
+    "inference_time": 0.0572575,
+    "timestamp": "2026-07-26T06:26:47.601527+00:00"
+  }
+]

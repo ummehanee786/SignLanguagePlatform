@@ -1,0 +1,12 @@
+{
+  "n_trials": 1000,
+  "avg_inference_time_ms": 37.8888,
+  "p50_inference_time_ms": 36.6657,
+  "p95_inference_time_ms": 42.6125,
+  "p99_inference_time_ms": 68.499,
+  "peak_memory_mb": 31.1448,
+  "cpu_utilization_percent": 99.6,
+  "throughput_predictions_per_second": 26.4,
+  "model": "RandomForestClassifier(n_estimators=100, n_jobs=1)",
+  "model_file_size_kb": 69439.93
+}

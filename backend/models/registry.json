@@ -1,0 +1,56 @@
+{
+  "latest_version": "v1",
+  "versions": {
+    "v1": {
+      "version": "v1",
+      "file": "gesture_classifier_v1.joblib",
+      "dataset_version": "asl_alphabet_full_v1",
+      "feature_version": "landmarks_normalized_v1",
+      "model_used": "RandomForestClassifier",
+      "parameters": {
+        "n_estimators": 100,
+        "random_state": 42
+      },
+      "metrics": {
+        "accuracy": 0.9875,
+        "precision": 0.9876,
+        "recall": 0.9875,
+        "f1_score": 0.9875,
+        "training_time_seconds": 52.7701
+      },
+      "date": "2026-07-25",
+      "engineer_name": "T L UMME HANEE",
+      "num_classes": 28,
+      "classes": [
+        "A",
+        "B",
+        "C",
+        "D",
+        "E",
+        "F",
+        "G",
+        "H",
+        "I",
+        "J",
+        "K",
+        "L",
+        "M",
+        "N",
+        "O",
+        "P",
+        "Q",
+        "R",
+        "S",
+        "T",
+        "U",
+        "V",
+        "W",
+        "X",
+        "Y",
+        "Z",
+        "del",
+        "space"
+      ]
+    }
+  }
+}
