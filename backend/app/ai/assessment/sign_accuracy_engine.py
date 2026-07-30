@@ -35,6 +35,7 @@ from app.ai.assessment.motion_metrics import (
     gesture_stability,
     invalid_frames_before_valid,
     overall_sign_score,
+    unstable_frames_before_acceptance,
 )
 
 # Letter pairs known (from error_analysis.md, Task 4 of the earlier ML
@@ -126,6 +127,9 @@ class SignAccuracyAssessmentEngine:
         avg_confidence_over_gesture = (
             average_confidence(motion_records) if motion_records else None
         )
+        unstable_before_accept = (
+            unstable_frames_before_acceptance(motion_records) if motion_records else None
+        )
         # Overall sign score doesn't require a capture window - it always
         # has correctness/confidence/timing to work with; stability is
         # folded in only when a window was actually captured.
@@ -155,11 +159,17 @@ class SignAccuracyAssessmentEngine:
             gesture_stability=stability,
             invalid_frames_before_valid=invalid_before_valid,
             average_confidence_over_gesture=avg_confidence_over_gesture,
+            unstable_frames_before_acceptance=unstable_before_accept,
             overall_sign_score=sign_score,
         )
 
         # Build feedback using landmarks so it can be stored with the attempt.
-        feedback = self._build_feedback(preliminary_record, landmarks=prediction.landmarks)
+        feedback = self._build_feedback(
+            preliminary_record,
+            landmarks=prediction.landmarks,
+            prediction=prediction,
+            motion_records=motion_records,
+        )
 
         # Store the attempt (including feedback message) so gesture_accuracy
         # below reflects this attempt too.
@@ -193,6 +203,7 @@ class SignAccuracyAssessmentEngine:
             gesture_stability=stability,
             invalid_frames_before_valid=invalid_before_valid,
             average_confidence_over_gesture=avg_confidence_over_gesture,
+            unstable_frames_before_acceptance=unstable_before_accept,
             overall_sign_score=sign_score,
         )
         # Update the record's gesture_accuracy to the real value now that
@@ -204,6 +215,8 @@ class SignAccuracyAssessmentEngine:
         self,
         record: AssessmentRecord,
         landmarks: Optional[list] = None,
+        prediction: Optional[PredictionResponse] = None,
+        motion_records: Optional[List[GestureFrameRecord]] = None,
     ) -> FeedbackObject:
         motion_note = (
             f" Note: '{record.expected_gesture}' is traditionally a motion-based "
@@ -259,10 +272,144 @@ class SignAccuracyAssessmentEngine:
             severity=severity,
         )
 
+        extra_messages = []
+        extra_tips = []
+
+        # Rule-based feedback layer for pipeline visibility
+        if prediction is not None:
+            if hasattr(prediction, "has_person") and not prediction.has_person:
+                extra_messages.append("No person detected in the frame.")
+                extra_tips.append("Make sure you are positioned in front of the camera.")
+            elif hasattr(prediction, "upper_body_visible") and not prediction.upper_body_visible:
+                extra_messages.append("Please keep your upper body fully visible inside the camera frame.")
+                extra_tips.append("Position yourself so your upper body (shoulders, chest) is visible.")
+
+            if hasattr(prediction, "hand_count") and prediction.hand_count > 2:
+                extra_messages.append("Only one person should be present in the camera view.")
+                extra_tips.append("Ensure only a single person's hands are shown in the frame.")
+
+            if hasattr(prediction, "partial_hand_visible") and prediction.partial_hand_visible:
+                extra_messages.append("Please keep your entire hand visible within the camera view.")
+                extra_tips.append("Ensure your signing hand stays completely inside the frame boundary.")
+            elif hasattr(prediction, "hand_centered") and not prediction.hand_centered:
+                extra_messages.append("Move your hand closer to the center of the frame.")
+                extra_tips.append("Move your hand so it is positioned more centrally in the video frame.")
+
+        # Rule-based feedback layer for motion and stability metrics
+        if motion_records:
+            # Check for early release: had a stable prediction at some point, but the last frames are invalid
+            had_stable = any(r.valid for r in motion_records)
+            last_few_valid = [r.valid for r in motion_records[-3:]]
+            if had_stable and len(last_few_valid) >= 3 and not any(last_few_valid):
+                extra_messages.append("Hold the gesture slightly longer before releasing.")
+                extra_tips.append("Avoid dropping your hand too quickly after stabilizing.")
+
+            # Check if hand moved/wobbled before prediction stabilized
+            if record.unstable_frames_before_acceptance is not None and record.unstable_frames_before_acceptance > 8:
+                extra_messages.append("Your hand moved before prediction stabilized.")
+                extra_tips.append("Try to hold your hand still from the moment you start the sign.")
+            elif record.gesture_stability is not None and record.gesture_stability < 65.0:
+                extra_messages.append("Your hand was moving or wobbling too much.")
+                extra_tips.append("Ensure you hold the pose key landmarks steady.")
+
+        # Merge with detailed feedback
+        final_message = detailed.overall_message
+        if extra_messages:
+            final_message += " " + " ".join(extra_messages)
+
+        final_tip = detailed.tip
+        if extra_tips:
+            if final_tip:
+                final_tip += " " + " ".join(extra_tips)
+            else:
+                final_tip = " ".join(extra_tips)
+
+        # Retrieve personalized data and inject into messages
+        tutor_notes = []
+        recommendations = []
+        student_id = record.student_id
+
+        if student_id:
+            try:
+                from app.services.error_analysis_service import ErrorAnalysisService
+                ea_service = ErrorAnalysisService(self._progress_service)
+                insights = ea_service.analyze_student_errors(student_id)
+
+                expected = record.expected_gesture.upper()
+                predicted = record.predicted_gesture.upper() if record.predicted_gesture else None
+
+                # 1. Check for repeated mistakes / common confuses
+                if not record.correct and predicted:
+                    is_frequent_confusion = any(
+                        p.expected.upper() == expected and p.predicted.upper() == predicted
+                        for p in insights.most_confused_pairs
+                    )
+                    if is_frequent_confusion:
+                        tutor_notes.append(
+                            f"You frequently confuse '{expected}' with '{predicted}'."
+                        )
+
+                    rep_mistakes = [m for m in insights.repeated_mistakes if m.alphabet.upper() == expected]
+                    if rep_mistakes:
+                        tutor_notes.append(
+                            f"You have struggled with '{expected}' across {len(rep_mistakes[0].sessions)} different sessions."
+                        )
+
+                # 2. Check for low confidence alerts
+                low_conf = [c for c in insights.low_confidence_alphabets if c.alphabet.upper() == expected]
+                if low_conf:
+                    tutor_notes.append(
+                        f"Your average confidence on '{expected}' is low ({low_conf[0].average_confidence:.0%})."
+                    )
+
+                # 3. Check for performance trends (improvement/decline)
+                trend = [t for t in insights.performance_trends if t.alphabet.upper() == expected]
+                if trend:
+                    if trend[0].trend == "improving":
+                        tutor_notes.append(
+                            f"Great job! You are improving on '{expected}' ({trend[0].earlier_accuracy:.0f}% -> {trend[0].later_accuracy:.0f}% accuracy)."
+                        )
+                    elif trend[0].trend == "declining":
+                        tutor_notes.append(
+                            f"Your recent accuracy on '{expected}' has dipped ({trend[0].earlier_accuracy:.0f}% -> {trend[0].later_accuracy:.0f}%)."
+                        )
+
+                # 4. Generate highly relevant recommendations
+                # Suggest immediate revisions first (up to 2), then low confidence alphabets (up to 2)
+                for gesture in insights.revision_required_gestures[:2]:
+                    recommendations.append(f"Revise '{gesture}' (needs immediate review)")
+                for item in insights.low_confidence_alphabets:
+                    if item.alphabet not in insights.revision_required_gestures[:2] and len(recommendations) < 3:
+                        recommendations.append(f"Practice '{item.alphabet}' to build confidence")
+
+                # If we need more recommendations, fill them with weakest alphabets
+                if len(recommendations) < 3:
+                    dashboard = self._progress_service.get_dashboard(student_id)
+                    for item in dashboard.get("weakest_alphabets", []):
+                        rec_str = f"Practice '{item['alphabet']}' (historical accuracy: {item['accuracy_percentage']:.0f}%)"
+                        if all(item["alphabet"] not in r for r in recommendations) and len(recommendations) < 3:
+                            recommendations.append(rec_str)
+
+                # If still empty, add a default message
+                if not recommendations:
+                    recommendations.append("Continue practicing the next letters in the lesson!")
+
+            except Exception:
+                pass
+
+        if tutor_notes:
+            final_message += " " + " ".join(tutor_notes)
+
+        # Update severity to warning if critical issues are detected
+        final_severity = detailed.severity
+        if any(msg in final_message for msg in ["No person detected", "upper body fully visible", "Only one person"]):
+            final_severity = "warning"
+
         return FeedbackObject(
-            message=detailed.overall_message,
-            tip=detailed.tip,
-            severity=detailed.severity,
+            message=final_message,
+            tip=final_tip,
+            severity=final_severity,
             deviations=[d.to_dict() if hasattr(d, "to_dict") else d for d in detailed.deviations],
-            correction_messages=detailed.correction_messages,
+            correction_messages=detailed.correction_messages + extra_messages,
+            recommendations=recommendations,
         )

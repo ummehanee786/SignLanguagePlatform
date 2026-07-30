@@ -50,6 +50,13 @@ class PredictionResult:
     total_time_ms: Optional[float] = None  # full pipeline: landmarks -> ... -> result
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    # Pipeline quality and visibility flags
+    has_person: bool = False
+    hand_count: int = 0
+    upper_body_visible: bool = False
+    partial_hand_visible: bool = False
+    hand_centered: bool = False
+
     def to_dict(self) -> dict:
         """JSON-serializable representation, e.g. for logging or an API response."""
         return asdict(self)
@@ -60,12 +67,22 @@ class PredictionResult:
         error: str,
         model_version: Optional[str] = None,
         total_time_ms: Optional[float] = None,
+        has_person: bool = False,
+        hand_count: int = 0,
+        upper_body_visible: bool = False,
+        partial_hand_visible: bool = False,
+        hand_centered: bool = False,
     ) -> "PredictionResult":
         return cls(
             success=False,
             error=error,
             model_version=model_version,
             total_time_ms=total_time_ms,
+            has_person=has_person,
+            hand_count=hand_count,
+            upper_body_visible=upper_body_visible,
+            partial_hand_visible=partial_hand_visible,
+            hand_centered=hand_centered,
         )
 
     @classmethod
@@ -79,6 +96,11 @@ class PredictionResult:
         model_inference_time_ms: float,
         total_time_ms: float,
         landmarks: Optional[List[float]] = None,
+        has_person: bool = True,
+        hand_count: int = 1,
+        upper_body_visible: bool = True,
+        partial_hand_visible: bool = False,
+        hand_centered: bool = True,
     ) -> "PredictionResult":
         return cls(
             success=True,
@@ -90,4 +112,9 @@ class PredictionResult:
             model_inference_time_ms=model_inference_time_ms,
             total_time_ms=total_time_ms,
             landmarks=landmarks,
+            has_person=has_person,
+            hand_count=hand_count,
+            upper_body_visible=upper_body_visible,
+            partial_hand_visible=partial_hand_visible,
+            hand_centered=hand_centered,
         )

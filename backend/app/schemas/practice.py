@@ -48,6 +48,7 @@ class AssessmentRecordSchema(BaseModel):
     gesture_stability: Optional[float] = None
     invalid_frames_before_valid: Optional[int] = None
     average_confidence_over_gesture: Optional[float] = None
+    unstable_frames_before_acceptance: Optional[int] = None
     overall_sign_score: Optional[float] = None
     timestamp: str
 
@@ -60,6 +61,7 @@ class FeedbackObjectSchema(BaseModel):
     # Landmark-level corrections from GestureFeedbackEngine
     deviations: List[dict] = []
     correction_messages: List[str] = []
+    recommendations: List[str] = []
 
 
 class AttemptResponse(BaseModel):

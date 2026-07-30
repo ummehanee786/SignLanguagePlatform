@@ -80,7 +80,7 @@ class GestureRecognitionEngine:
         # indistinguishable from a clean one-hand frame. Detecting up to
         # 2 lets predict() below actually notice the multi-hand case and
         # reject it explicitly instead of silently guessing.
-        self.detector = detector or HandLandmarkDetector(static_image_mode=True, max_num_hands=2)
+        self.detector = detector or HandLandmarkDetector(static_image_mode=True, max_num_hands=4)
 
         logger.info(
             "GestureRecognitionEngine ready (model_version=%s, classes=%d, confidence_threshold=%.2f)",
@@ -99,15 +99,32 @@ class GestureRecognitionEngine:
         try:
             detection = self.detector.extract_landmarks_with_metadata(image)
             hand_count = detection["hand_count"]
+            has_person = detection.get("has_person", False)
+            upper_body_visible = detection.get("upper_body_visible", False)
+            partial_hand_visible = detection.get("partial_hand_visible", False)
+            hand_centered = detection.get("hand_centered", False)
 
             if hand_count == 0:
-                return self._failure("No hand detected in image.", start)
+                return self._failure(
+                    "No hand detected in image.",
+                    start,
+                    has_person=has_person,
+                    hand_count=hand_count,
+                    upper_body_visible=upper_body_visible,
+                    partial_hand_visible=partial_hand_visible,
+                    hand_centered=hand_centered,
+                )
 
             if hand_count > MAX_SUPPORTED_HANDS:
                 return self._failure(
                     f"Detected {hand_count} hands, but this model only supports "
                     f"{MAX_SUPPORTED_HANDS} at a time. Please show one hand only.",
                     start,
+                    has_person=has_person,
+                    hand_count=hand_count,
+                    upper_body_visible=upper_body_visible,
+                    partial_hand_visible=partial_hand_visible,
+                    hand_centered=hand_centered,
                 )
 
             landmarks = detection["landmarks"]
@@ -115,7 +132,15 @@ class GestureRecognitionEngine:
             try:
                 feature_vector = build_feature_vector(landmarks)
             except FeatureValidationError as e:
-                return self._failure(f"Feature validation failed: {e}", start)
+                return self._failure(
+                    f"Feature validation failed: {e}",
+                    start,
+                    has_person=has_person,
+                    hand_count=hand_count,
+                    upper_body_visible=upper_body_visible,
+                    partial_hand_visible=partial_hand_visible,
+                    hand_centered=hand_centered,
+                )
 
             model_start = time.perf_counter()
             probabilities_row = self.model.predict_proba(feature_vector)[0]
@@ -147,6 +172,11 @@ class GestureRecognitionEngine:
                 model_inference_time_ms=round(model_time_ms, 4),
                 total_time_ms=round(total_time_ms, 4),
                 landmarks=landmarks,
+                has_person=has_person,
+                hand_count=hand_count,
+                upper_body_visible=upper_body_visible,
+                partial_hand_visible=partial_hand_visible,
+                hand_centered=hand_centered,
             )
 
         except Exception as e:
@@ -157,13 +187,27 @@ class GestureRecognitionEngine:
             logger.exception("Unexpected error during prediction")
             return self._failure(f"Unexpected error during prediction: {e}", start)
 
-    def _failure(self, message: str, start_time: float) -> PredictionResult:
+    def _failure(
+        self,
+        message: str,
+        start_time: float,
+        has_person: bool = False,
+        hand_count: int = 0,
+        upper_body_visible: bool = False,
+        partial_hand_visible: bool = False,
+        hand_centered: bool = False,
+    ) -> PredictionResult:
         total_time_ms = (time.perf_counter() - start_time) * 1000
         logger.warning("prediction failed: %s (total_time_ms=%.2f)", message, total_time_ms)
         return PredictionResult.failure(
             error=message,
             model_version=self.model_version,
             total_time_ms=round(total_time_ms, 4),
+            has_person=has_person,
+            hand_count=hand_count,
+            upper_body_visible=upper_body_visible,
+            partial_hand_visible=partial_hand_visible,
+            hand_centered=hand_centered,
         )
 
     def close(self):

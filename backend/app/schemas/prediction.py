@@ -37,3 +37,10 @@ class PredictionResponse(BaseModel):
     # Raw 21-landmark flat array (63 floats) from MediaPipe.
     # Populated on successful predictions; None when no hand was detected.
     landmarks: Optional[List[float]] = None
+
+    # Pipeline quality and visibility flags
+    has_person: bool = False
+    hand_count: int = 0
+    upper_body_visible: bool = False
+    partial_hand_visible: bool = False
+    hand_centered: bool = False

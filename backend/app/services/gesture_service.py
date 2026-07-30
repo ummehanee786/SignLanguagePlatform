@@ -58,4 +58,9 @@ class GestureService:
             model_version=result.model_version,
             processing_time=(result.total_time_ms or 0.0) / 1000.0,  # ms -> seconds
             landmarks=result.landmarks,
+            has_person=result.has_person,
+            hand_count=result.hand_count,
+            upper_body_visible=result.upper_body_visible,
+            partial_hand_visible=result.partial_hand_visible,
+            hand_centered=result.hand_centered,
         )

@@ -46,6 +46,7 @@ class AssessmentRecord:
     gesture_stability: Optional[float] = None            # 0-100, higher = steadier hold
     invalid_frames_before_valid: Optional[int] = None     # frames before the hand was usable
     average_confidence_over_gesture: Optional[float] = None  # mean confidence across the capture window
+    unstable_frames_before_acceptance: Optional[int] = None  # count of frames before prediction stabilized
     overall_sign_score: Optional[float] = None            # 0-100, combines accuracy + confidence + timing
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
@@ -70,6 +71,7 @@ class FeedbackObject:
     # Empty for correct predictions or when landmarks aren't available.
     deviations: List[dict] = field(default_factory=list)
     correction_messages: List[str] = field(default_factory=list)
+    recommendations: List[str] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)

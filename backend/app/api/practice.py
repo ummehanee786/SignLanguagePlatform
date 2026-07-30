@@ -78,6 +78,18 @@ async def stream_frame(session_id: str, file: UploadFile = File(...)):
         "buffered_frames": len(capture),
         "buffer_full": capture.is_full(),
         "frame_valid": prediction.success,
+        "predicted_class": prediction.predicted_class,
+        "confidence": prediction.confidence,
+        "stable_prediction": capture.stable_prediction,
+        "stable_confidence": capture.stable_confidence,
+        "stable_streak": capture.stable_streak,
+        "inference_latency": capture.latest_latency,
+        "processing_fps": capture.get_processing_fps(),
+        "has_person": prediction.has_person,
+        "hand_count": prediction.hand_count,
+        "upper_body_visible": prediction.upper_body_visible,
+        "partial_hand_visible": prediction.partial_hand_visible,
+        "hand_centered": prediction.hand_centered,
     }
 
 

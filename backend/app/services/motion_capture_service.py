@@ -38,6 +38,17 @@ class MotionCaptureSession:
     def __init__(self, max_frames: int = DEFAULT_SEQUENCE_LENGTH):
         self.sequence_buffer = FrameBuffer(max_frames=max_frames)
         self._records: "deque[GestureFrameRecord]" = deque(maxlen=max_frames)
+        # Parameters for stable gesture detection (configurable)
+        # default to 5 consecutive frames for alphabet recognition
+        self.consecutive_frames_required = 5
+        self.stable_prediction: Optional[str] = None
+        self.stable_confidence: Optional[float] = None
+        self.stable_streak: int = 0
+        self.current_streak_class: Optional[str] = None
+        
+        # Deque to track timestamps of frames for FPS
+        self._timestamps: "deque[float]" = deque(maxlen=20)
+        self.latest_latency: float = 0.0
 
     def add_prediction(self, prediction) -> None:
         """
@@ -54,6 +65,10 @@ class MotionCaptureSession:
         real, usable landmark vectors (matching FrameBuffer's existing
         contract).
         """
+        import time
+        self._timestamps.append(time.perf_counter())
+        self.latest_latency = prediction.processing_time if hasattr(prediction, "processing_time") else (prediction.total_time_ms / 1000.0 if hasattr(prediction, "total_time_ms") and prediction.total_time_ms else 0.0)
+
         if prediction.success and prediction.landmarks:
             normalized = normalize_landmarks(prediction.landmarks)
             self.sequence_buffer.add_vector(normalized)
@@ -63,11 +78,45 @@ class MotionCaptureSession:
                 predicted_class=prediction.predicted_class,
                 confidence=prediction.confidence,
             ))
+
+            # Stable prediction logic
+            pred_class = prediction.predicted_class
+            if pred_class == self.current_streak_class:
+                self.stable_streak += 1
+            else:
+                self.current_streak_class = pred_class
+                self.stable_streak = 1
+                self.stable_prediction = None
+                self.stable_confidence = None
+
+            if self.stable_streak >= self.consecutive_frames_required:
+                self.stable_prediction = pred_class
+                # Average confidence over the streak frames
+                recent = list(self._records)[-self.stable_streak:]
+                recent_confs = [r.confidence for r in recent if r.valid and r.confidence is not None]
+                if recent_confs:
+                    self.stable_confidence = round(sum(recent_confs) / len(recent_confs), 4)
+                else:
+                    self.stable_confidence = prediction.confidence
         else:
             self._records.append(GestureFrameRecord(
                 normalized_landmarks=None,
                 valid=False,
             ))
+
+            # Reset streak on invalid frame
+            self.current_streak_class = None
+            self.stable_streak = 0
+            self.stable_prediction = None
+            self.stable_confidence = None
+
+    def get_processing_fps(self) -> float:
+        if len(self._timestamps) < 2:
+            return 0.0
+        duration = self._timestamps[-1] - self._timestamps[0]
+        if duration <= 0:
+            return 0.0
+        return round((len(self._timestamps) - 1) / duration, 2)
 
     def records(self) -> List[GestureFrameRecord]:
         """The per-frame log, oldest first - what motion_metrics.py consumes."""
@@ -79,6 +128,12 @@ class MotionCaptureSession:
         frames from two different letters."""
         self.sequence_buffer.clear()
         self._records.clear()
+        self.stable_prediction = None
+        self.stable_confidence = None
+        self.stable_streak = 0
+        self.current_streak_class = None
+        self._timestamps.clear()
+        self.latest_latency = 0.0
 
     def is_full(self) -> bool:
         return self.sequence_buffer.is_full()

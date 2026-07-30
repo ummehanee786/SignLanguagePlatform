@@ -23,8 +23,10 @@ from app.ai.assessment.motion_metrics import (
     gesture_stability,
     invalid_frames_before_valid,
     overall_sign_score,
+    unstable_frames_before_acceptance,
 )
 from app.services.motion_capture_service import MotionCaptureManager, MotionCaptureSession
+from app.schemas.prediction import PredictionResponse
 
 
 # ---------------------------------------------------------------------------
@@ -198,3 +200,138 @@ class TestOverallSignScore:
             handshape_correct=True, confidence=1.5, time_taken_seconds=0.0, stability=150.0,
         )
         assert 0.0 <= score <= 100.0
+
+
+class MockProgressService:
+    def record_attempt(
+        self,
+        student_id,
+        alphabet_practiced,
+        predicted_alphabet,
+        correct,
+        confidence,
+        inference_time,
+        time_taken_seconds=None,
+        session_id=None,
+        feedback_message=None,
+        feedback_tip=None,
+    ) -> dict:
+        return {}
+
+    def get_gesture_accuracy(self, student_id, gesture):
+        return 95.0
+
+
+class TestUnstableFramesBeforeAcceptance:
+    def test_unstable_frames_before_acceptance_standard(self):
+        records = [
+            GestureFrameRecord(None, valid=False), # invalid
+            GestureFrameRecord([0]*63, valid=True, predicted_class="A"), # index 0 (valid index 0)
+            GestureFrameRecord([0]*63, valid=True, predicted_class="B"), # index 1 (valid index 1)
+            GestureFrameRecord([0]*63, valid=True, predicted_class="B"),
+            GestureFrameRecord([0]*63, valid=True, predicted_class="B"),
+            GestureFrameRecord([0]*63, valid=True, predicted_class="B"),
+            GestureFrameRecord([0]*63, valid=True, predicted_class="B"), # stable streak of 5 starts at valid index 1
+        ]
+        assert unstable_frames_before_acceptance(records, 5) == 1
+
+    def test_unstable_frames_before_acceptance_not_stabilized(self):
+        records = [
+            GestureFrameRecord([0]*63, valid=True, predicted_class="A"),
+            GestureFrameRecord([0]*63, valid=True, predicted_class="B"),
+            GestureFrameRecord([0]*63, valid=True, predicted_class="A"),
+        ]
+        assert unstable_frames_before_acceptance(records, 2) == 3
+
+
+class TestMotionCaptureStableStreak:
+    def test_stable_streak_tracking(self):
+        session = MotionCaptureSession(max_frames=10)
+        session.consecutive_frames_required = 3
+        
+        # Successive matching predictions
+        res_a = PredictionResponse(success=True, predicted_class="A", confidence=0.9, processing_time=0.05, landmarks=[0]*63)
+        
+        session.add_prediction(res_a)
+        assert session.stable_prediction is None
+        assert session.stable_streak == 1
+        
+        session.add_prediction(res_a)
+        assert session.stable_prediction is None
+        assert session.stable_streak == 2
+
+        session.add_prediction(res_a)
+        assert session.stable_prediction == "A"
+        assert session.stable_streak == 3
+        assert session.stable_confidence == 0.9
+
+        # Streak broken by different class
+        res_b = PredictionResponse(success=True, predicted_class="B", confidence=0.8, processing_time=0.04, landmarks=[0]*63)
+        session.add_prediction(res_b)
+        assert session.stable_prediction is None
+        assert session.stable_streak == 1
+
+        # Streak broken by invalid frame
+        res_inv = PredictionResponse(success=False, processing_time=0.01)
+        session.add_prediction(res_inv)
+        assert session.stable_prediction is None
+        assert session.stable_streak == 0
+
+
+class TestMotionCaptureFPS:
+    def test_fps_calculation(self):
+        session = MotionCaptureSession(max_frames=10)
+        # Empty
+        assert session.get_processing_fps() == 0.0
+        
+        # Add timestamped frames
+        session._timestamps.append(100.0)
+        session._timestamps.append(101.0)
+        assert session.get_processing_fps() == 1.0
+
+
+class TestRuleBasedVisibilityFeedback:
+    def test_visibility_feedback(self):
+        from app.ai.assessment.sign_accuracy_engine import SignAccuracyAssessmentEngine
+        engine = SignAccuracyAssessmentEngine(MockProgressService())
+        
+        # 1. No person detected
+        pred = PredictionResponse(
+            success=True, predicted_class="A", confidence=0.9, processing_time=0.05, landmarks=[0]*63,
+            has_person=False, hand_count=1, upper_body_visible=False, partial_hand_visible=False, hand_centered=True
+        )
+        record, feedback = engine.assess(
+            student_id="test", session_id="session", expected_gesture="A", prediction=pred,
+            attempt_number=1, time_taken_seconds=1.0, session_accuracy=100.0, motion_records=None
+        )
+        assert "No person detected" in feedback.message
+        assert feedback.severity == "warning"
+
+        # 2. Hand not centered
+        pred_off_center = PredictionResponse(
+            success=True, predicted_class="A", confidence=0.9, processing_time=0.05, landmarks=[0]*63,
+            has_person=True, hand_count=1, upper_body_visible=True, partial_hand_visible=False, hand_centered=False
+        )
+        record, feedback_center = engine.assess(
+            student_id="test", session_id="session", expected_gesture="A", prediction=pred_off_center,
+            attempt_number=1, time_taken_seconds=1.0, session_accuracy=100.0, motion_records=None
+        )
+        assert "Move your hand closer to the center" in feedback_center.message
+
+        # 3. Early release check
+        motion_records = [
+            GestureFrameRecord([0]*63, valid=True, predicted_class="A", confidence=0.9),
+            GestureFrameRecord([0]*63, valid=True, predicted_class="A", confidence=0.9),
+            GestureFrameRecord(None, valid=False),
+            GestureFrameRecord(None, valid=False),
+            GestureFrameRecord(None, valid=False),
+        ]
+        pred_correct = PredictionResponse(
+            success=True, predicted_class="A", confidence=0.9, processing_time=0.05, landmarks=[0]*63,
+            has_person=True, hand_count=1, upper_body_visible=True, partial_hand_visible=False, hand_centered=True
+        )
+        record, feedback_release = engine.assess(
+            student_id="test", session_id="session", expected_gesture="A", prediction=pred_correct,
+            attempt_number=1, time_taken_seconds=1.0, session_accuracy=100.0, motion_records=motion_records
+        )
+        assert "Hold the gesture slightly longer" in feedback_release.message

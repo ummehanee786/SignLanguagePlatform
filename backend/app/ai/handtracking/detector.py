@@ -53,6 +53,12 @@ class HandLandmarkDetector:
             min_detection_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence,
         )
+        self.mp_pose = mp.solutions.pose
+        self._pose = self.mp_pose.Pose(
+            static_image_mode=static_image_mode,
+            min_detection_confidence=min_detection_confidence,
+            min_tracking_confidence=min_tracking_confidence,
+        )
 
     def process(self, frame):
         """
@@ -83,25 +89,14 @@ class HandLandmarkDetector:
     def extract_landmarks_with_metadata(self, frame) -> dict:
         """
         Same underlying detection as extract_landmarks(), but also
-        reports how many hands were actually seen in the frame - used
-        by the inference engine to explicitly reject multi-hand frames
-        instead of silently picking one hand and discarding the rest.
-
-        Note: for this to actually be able to *see* a second hand, the
-        detector instance calling this method needs to have been
-        constructed with max_num_hands >= 2 - extract_landmarks() (used
-        for single-hand dataset building) intentionally uses
-        max_num_hands=1 and would never observe a second hand even if
-        one were present, which is correct for that use case but wrong
-        for this one.
-
-        Returns:
-            {
-                "hand_count": int,
-                "landmarks": list[float] | None,  # first hand's 63 values, if any
-            }
+        reports how many hands were actually seen in the frame and
+        pose/visibility metadata.
         """
-        multi_hand_landmarks = self.process(frame)
+        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        hands_results = self._hands.process(rgb_frame)
+        pose_results = self._pose.process(rgb_frame)
+
+        multi_hand_landmarks = hands_results.multi_hand_landmarks
         hand_count = len(multi_hand_landmarks) if multi_hand_landmarks else 0
 
         landmarks = None
@@ -111,7 +106,47 @@ class HandLandmarkDetector:
                 values.extend([lm.x, lm.y, lm.z])
             landmarks = values
 
-        return {"hand_count": hand_count, "landmarks": landmarks}
+        has_person = pose_results.pose_landmarks is not None
+        upper_body_visible = True
+        
+        # Check upper body visibility
+        # Nose(0), Left shoulder(11), Right shoulder(12), Left elbow(13), Right elbow(14)
+        if has_person:
+            landmarks_pose = pose_results.pose_landmarks.landmark
+            upper_body_indices = [0, 11, 12, 13, 14]
+            # Ensure none are under a threshold (e.g. 0.5)
+            for idx in upper_body_indices:
+                if idx < len(landmarks_pose) and landmarks_pose[idx].visibility < 0.5:
+                    upper_body_visible = False
+                    break
+        else:
+            upper_body_visible = False
+
+        partial_hand_visible = False
+        if hand_count > 0:
+            for hand_lms in multi_hand_landmarks:
+                for lm in hand_lms.landmark:
+                    # If very close to boundaries, flag as partial hand visibility
+                    if lm.x < 0.01 or lm.x > 0.99 or lm.y < 0.01 or lm.y > 0.99:
+                        partial_hand_visible = True
+                        break
+
+        hand_centered = True
+        if hand_count > 0:
+            # Check if hand centroid / wrist is reasonably close to center (0.5, 0.5)
+            # Center tolerance of 0.25 on each side
+            wrist = multi_hand_landmarks[0].landmark[0]
+            if abs(wrist.x - 0.5) > 0.25 or abs(wrist.y - 0.5) > 0.25:
+                hand_centered = False
+
+        return {
+            "hand_count": hand_count,
+            "landmarks": landmarks,
+            "has_person": has_person,
+            "upper_body_visible": upper_body_visible,
+            "partial_hand_visible": partial_hand_visible,
+            "hand_centered": hand_centered,
+        }
 
     def draw_landmarks(self, frame, hand_landmarks):
         """Draws the 21 landmarks + connections onto frame, in place."""
@@ -125,6 +160,7 @@ class HandLandmarkDetector:
 
     def close(self):
         self._hands.close()
+        self._pose.close()
 
     def __enter__(self):
         return self

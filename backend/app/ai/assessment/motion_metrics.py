@@ -154,3 +154,43 @@ def overall_sign_score(
         )
 
     return round(max(0.0, min(100.0, score)), 2)
+
+
+def unstable_frames_before_acceptance(
+    records: List[GestureFrameRecord],
+    consecutive_frames: int = 5,
+) -> Optional[int]:
+    """
+    Counts how many valid frames were processed before the stable prediction
+    pattern was established in the stream session.
+
+    Finds the first sequence of `consecutive_frames` consecutive valid frames
+    with matching predictions. Returns the index at which this sequence started.
+    If no stable prediction was established, returns the total number of valid
+    records (since none of them stabilized).
+    Returns None if records is empty or None.
+    """
+    if not records:
+        return None
+
+    # Filter to valid frames
+    valid_records = [r for r in records if r.valid]
+    if not valid_records:
+        return 0
+
+    streak = 0
+    streak_class = None
+    streak_start_idx = -1
+
+    for i, r in enumerate(valid_records):
+        if r.predicted_class == streak_class:
+            streak += 1
+        else:
+            streak_class = r.predicted_class
+            streak_start_idx = i
+            streak = 1
+
+        if streak >= consecutive_frames:
+            return streak_start_idx
+
+    return len(valid_records)
