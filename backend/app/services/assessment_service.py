@@ -129,7 +129,22 @@ class AssessmentService:
 
         next_lesson_id = None
         if session["auto_next"] and record.correct:
-            next_lesson_id = self._lesson_service.get_next_lesson_id(session["current_lesson_id"])
+            from app.services.recommendation_service import get_recommendation_service
+            recs = get_recommendation_service().get_recommendations(session["student_id"])
+            next_alphabet = None
+            for rec in recs:
+                if rec.alphabet.upper() != expected_alphabet.upper():
+                    next_alphabet = rec.alphabet.upper()
+                    break
+
+            if next_alphabet:
+                nl = self._lesson_service.get_lesson_by_sign(next_alphabet)
+                if nl:
+                    next_lesson_id = nl["id"]
+
+            if next_lesson_id is None:
+                next_lesson_id = self._lesson_service.get_next_lesson_id(session["current_lesson_id"])
+
             session = self._session_service.advance_lesson(session_id, next_lesson_id)
         else:
             # Incorrect (or auto_next disabled): stay on the same letter,

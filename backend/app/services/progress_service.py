@@ -44,6 +44,9 @@ class ProgressService:
         )
         self._storage_path.parent.mkdir(parents=True, exist_ok=True)
         self._load()
+        self._profiles_path = self._storage_path.parent / "learner_profiles.json"
+        self._profiles: dict[str, dict] = {}
+        self._load_profiles()
 
     def record_attempt(
         self,
@@ -83,6 +86,7 @@ class ProgressService:
         }
         self._attempts.append(record)
         self._save()
+        self._update_profile_with_attempt(student_id, record)
         return record
 
     def get_history(self, student_id: str, limit: Optional[int] = None) -> list[dict]:
@@ -118,6 +122,9 @@ class ProgressService:
 
         total_attempts = len(attempts)
         if total_attempts == 0:
+            profile = self.get_learner_profile(student_id)
+            from app.services.recommendation_service import get_recommendation_service
+            recs = get_recommendation_service().get_recommendations(student_id)
             return {
                 "student_id": student_id,
                 "total_attempts": 0,
@@ -128,6 +135,8 @@ class ProgressService:
                 "daily_practice_streak": 0,
                 "average_confidence": 0.0,
                 "recent_practice_history": [],
+                "learner_profile": profile,
+                "recommendations": recs,
             }
 
         correct_count = sum(1 for a in attempts if a["correct"])
@@ -171,6 +180,10 @@ class ProgressService:
 
         recent_history = self.get_history(student_id, limit=RECENT_HISTORY_LIMIT)
 
+        profile = self.get_learner_profile(student_id)
+        from app.services.recommendation_service import get_recommendation_service
+        recs = get_recommendation_service().get_recommendations(student_id)
+
         return {
             "student_id": student_id,
             "total_attempts": total_attempts,
@@ -181,6 +194,8 @@ class ProgressService:
             "daily_practice_streak": streak,
             "average_confidence": average_confidence,
             "recent_practice_history": recent_history,
+            "learner_profile": profile,
+            "recommendations": recs,
         }
 
     @staticmethod
@@ -244,6 +259,121 @@ class ProgressService:
                     self._attempts = json.load(f)
             except (json.JSONDecodeError, OSError):
                 self._attempts = []
+
+    def _save_profiles(self):
+        with open(self._profiles_path, "w", encoding="utf-8") as f:
+            json.dump(self._profiles, f, indent=2)
+
+    def _load_profiles(self):
+        if self._profiles_path.exists():
+            try:
+                with open(self._profiles_path, "r", encoding="utf-8") as f:
+                    self._profiles = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                self._profiles = {}
+
+    def get_learner_profile(self, student_id: str) -> dict:
+        student_id = student_id.strip()
+        if student_id not in self._profiles:
+            has_history = any(a["student_id"] == student_id for a in self._attempts)
+            if has_history:
+                self._profiles[student_id] = self._bootstrap_profile(student_id)
+                self._save_profiles()
+            else:
+                self._profiles[student_id] = {
+                    "student_id": student_id,
+                    "total_practice_sessions": 0,
+                    "total_attempts": 0,
+                    "alphabet_mastery": {},
+                    "consecutive_correct": {},
+                    "consecutive_incorrect": {},
+                    "average_confidence": {},
+                    "last_practice_time": {}
+                }
+        return self._profiles[student_id]
+
+    def _bootstrap_profile(self, student_id: str) -> dict:
+        attempts = [a for a in self._attempts if a["student_id"] == student_id]
+        attempts.sort(key=lambda a: a["timestamp"])
+
+        profile = {
+            "student_id": student_id,
+            "total_practice_sessions": 0,
+            "total_attempts": len(attempts),
+            "alphabet_mastery": {},
+            "consecutive_correct": {},
+            "consecutive_incorrect": {},
+            "average_confidence": {},
+            "last_practice_time": {}
+        }
+
+        sessions = set()
+        conf_by_letter = defaultdict(list)
+        correct_by_letter = defaultdict(int)
+        attempts_by_letter = defaultdict(int)
+
+        for a in attempts:
+            letter = a["alphabet_practiced"].upper()
+            correct = a["correct"]
+            conf = a["confidence"]
+            time_str = a["timestamp"]
+            if a.get("session_id"):
+                sessions.add(a["session_id"])
+
+            if correct:
+                profile["consecutive_correct"][letter] = profile["consecutive_correct"].get(letter, 0) + 1
+                profile["consecutive_incorrect"][letter] = 0
+            else:
+                profile["consecutive_incorrect"][letter] = profile["consecutive_incorrect"].get(letter, 0) + 1
+                profile["consecutive_correct"][letter] = 0
+
+            conf_by_letter[letter].append(conf)
+            attempts_by_letter[letter] += 1
+            if correct:
+                correct_by_letter[letter] += 1
+
+            profile["last_practice_time"][letter] = time_str
+
+        profile["total_practice_sessions"] = len(sessions)
+
+        for letter in attempts_by_letter:
+            profile["alphabet_mastery"][letter] = round(correct_by_letter[letter] / attempts_by_letter[letter], 4)
+            profile["average_confidence"][letter] = round(sum(conf_by_letter[letter]) / len(conf_by_letter[letter]), 4)
+
+        return profile
+
+    def _update_profile_with_attempt(self, student_id: str, record: dict):
+        student_id = student_id.strip()
+        profile = self.get_learner_profile(student_id)
+
+        profile["total_attempts"] += 1
+
+        sessions = {a["session_id"] for a in self._attempts if a["student_id"] == student_id and a.get("session_id")}
+        profile["total_practice_sessions"] = len(sessions)
+
+        letter = record["alphabet_practiced"].upper()
+        correct = record["correct"]
+        conf = record["confidence"]
+        time_str = record["timestamp"]
+
+        if correct:
+            profile["consecutive_correct"][letter] = profile["consecutive_correct"].get(letter, 0) + 1
+            profile["consecutive_incorrect"][letter] = 0
+        else:
+            profile["consecutive_incorrect"][letter] = profile["consecutive_incorrect"].get(letter, 0) + 1
+            profile["consecutive_correct"][letter] = 0
+
+        # Recalculate average confidence and mastery for this letter
+        letter_attempts = [a for a in self._attempts if a["student_id"] == student_id and a["alphabet_practiced"].upper() == letter]
+        if letter_attempts:
+            correct_count = sum(1 for a in letter_attempts if a["correct"])
+            profile["alphabet_mastery"][letter] = round(correct_count / len(letter_attempts), 4)
+            profile["average_confidence"][letter] = round(sum(a["confidence"] for a in letter_attempts) / len(letter_attempts), 4)
+
+        profile["last_practice_time"][letter] = time_str
+
+        self._profiles[student_id] = profile
+        self._save_profiles()
 
     def get_session_review(self, student_id: str, session_id: str) -> Optional[dict]:
         """
