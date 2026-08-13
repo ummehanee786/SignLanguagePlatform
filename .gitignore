@@ -17,3 +17,4 @@ backend/data/*.csv
 # Environment
 backend/.env
 backend/.env.example
+frontend/.env.example
