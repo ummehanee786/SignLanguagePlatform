@@ -12,6 +12,7 @@ router = APIRouter()
 _EXPORT_CONFIG = {
     "json": ("application/json", "json"),
     "pdf": ("application/pdf", "pdf"),
+    "csv": ("text/csv", "csv"),
     "excel": (
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "xlsx",
@@ -32,7 +33,7 @@ def get_report(student_id: str):
 @router.get("/reports/{student_id}/export")
 def export_report(
     student_id: str,
-    format: str = Query(default="json", pattern="^(json|pdf|excel)$"),
+    format: str = Query(default="json", pattern="^(json|pdf|excel|csv)$"),
 ):
     """
     Downloads the report as a file. `format` is one of json (mandatory),
@@ -49,6 +50,8 @@ def export_report(
             report_service.export_json(student_id, output_path)
         elif format == "pdf":
             report_service.export_pdf(student_id, output_path)
+        elif format == "csv":
+            report_service.export_csv(student_id, output_path)
         else:
             report_service.export_excel(student_id, output_path)
     except RuntimeError as e:

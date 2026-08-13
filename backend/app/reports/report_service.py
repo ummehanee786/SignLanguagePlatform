@@ -284,6 +284,27 @@ class ReportService:
         wb.save(output_path)
         return output_path
 
+    def export_csv(self, student_id: str, output_path: Path) -> Path:
+        import csv
+        
+        report = self.generate_report(student_id)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(output_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Student", report["student_id"]])
+            writer.writerow(["Generated", report["generated_at"]])
+            writer.writerow(["Total attempts", report["total_assessment_attempts"]])
+            writer.writerow(["Correct", report["correct_attempts"]])
+            writer.writerow(["Incorrect", report["incorrect_attempts"]])
+            writer.writerow(["Overall score (%)", report["overall_assessment_score"]])
+            writer.writerow([])
+            writer.writerow(["Letter", "Attempts", "Correct", "Accuracy %"])
+            for g in report["gesture_wise_performance"]:
+                writer.writerow([g["alphabet"], g["attempts"], g["correct"], g["accuracy_percentage"]])
+                
+        return output_path
+
 
 _report_service: Optional["ReportService"] = None
 

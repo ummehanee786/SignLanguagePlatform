@@ -265,12 +265,35 @@ class ProgressService:
             json.dump(self._profiles, f, indent=2)
 
     def _load_profiles(self):
-        if self._profiles_path.exists():
-            try:
-                with open(self._profiles_path, "r", encoding="utf-8") as f:
-                    self._profiles = json.load(f)
-            except (json.JSONDecodeError, OSError):
-                self._profiles = {}
+        if not self._profiles_path.exists():
+            return
+        try:
+            with open(self._profiles_path, "r", encoding="utf-8") as f:
+                self._profiles = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            self._profiles = {}
+
+    def get_cohort_overview(self) -> dict:
+        total_students = len(self._profiles)
+        if total_students == 0:
+            return {"total_students": 0, "average_accuracy": 0, "active_students": 0}
+        
+        accuracies = []
+        active = 0
+        for pid, p in self._profiles.items():
+            stats = p.get("overall_statistics", {})
+            attempts = stats.get("total_attempts", 0)
+            if attempts > 0:
+                accuracies.append(stats.get("accuracy_percentage", 0))
+                active += 1
+                
+        avg_acc = sum(accuracies) / len(accuracies) if accuracies else 0
+        
+        return {
+            "total_students": total_students,
+            "average_accuracy": round(avg_acc, 2),
+            "active_students": active
+        }
 
     def get_learner_profile(self, student_id: str) -> dict:
         student_id = student_id.strip()

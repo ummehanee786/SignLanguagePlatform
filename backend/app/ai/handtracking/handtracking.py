@@ -7,11 +7,6 @@ Weekend Task 5 - Landmark Extraction
 Weekend Task 6 - Save Landmark Data
 Bonus - Thumb-Index Euclidean Distance
 
-Refactored to reuse HandLandmarkDetector instead of setting up
-MediaPipe directly - this is now the only script duplicating the AI
-module's logic, and it doesn't duplicate anymore: all MediaPipe
-setup/calls go through detector.py.
-
 Controls while the window is focused:
     Q  -  quit
     P  -  print current landmark coordinates to the terminal
@@ -25,24 +20,33 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
+import mediapipe as mp
 
-# Reach camera.py (in app/utils/) and detector.py (in this same folder),
-# without hardcoding an absolute path.
-utils_dir = Path(__file__).resolve().parent.parent.parent / "utils"
+# Reach the Camera module in the sibling utils/ folder, without
+# hardcoding an absolute path - this works regardless of where the
+# whole project folder is placed.
+utils_dir = Path(__file__).resolve().parent.parent / "utils"
 sys.path.append(str(utils_dir))
-sys.path.append(str(Path(__file__).resolve().parent))
 
 from camera import Camera, CameraError
-from detector import HandLandmarkDetector
 
 
-def landmarks_to_dicts(hand_landmarks):
-    """Task 5: pull (x, y, z) out of a MediaPipe result as plain dicts,
-    for printing/saving/distance calculations."""
-    return [
-        {"id": idx, "x": lm.x, "y": lm.y, "z": lm.z}
-        for idx, lm in enumerate(hand_landmarks.landmark)
-    ]
+def extract_landmarks(hand_landmarks):
+    """
+    Task 5: pull the (x, y, z) coordinates out of a MediaPipe hand
+    detection result, instead of only using them for drawing.
+
+    Coordinates are normalized (0.0-1.0) relative to the image width/
+    height, exactly as MediaPipe provides them - not converted to
+    pixels here, since different consumers of this data (saving,
+    printing, distance calculations) may want them in this raw form.
+
+    Returns a list of 21 dicts: [{"id": 0, "x":.., "y":.., "z":..}, ...]
+    """
+    landmarks = []
+    for idx, lm in enumerate(hand_landmarks.landmark):
+        landmarks.append({"id": idx, "x": lm.x, "y": lm.y, "z": lm.z})
+    return landmarks
 
 
 def print_landmarks(all_hands_landmarks):
@@ -57,7 +61,10 @@ def print_landmarks(all_hands_landmarks):
 
 
 def save_landmarks(all_hands_landmarks, captures_dir: Path):
-    """Task 6: save the current frame's landmark data to a JSON file."""
+    """
+    Task 6: save the current frame's landmark data to a JSON file.
+    File names auto-increment: capture_001.json, capture_002.json, ...
+    """
     captures_dir.mkdir(parents=True, exist_ok=True)
 
     existing = list(captures_dir.glob("capture_*.json"))
@@ -80,7 +87,13 @@ def save_landmarks(all_hands_landmarks, captures_dir: Path):
 
 
 def euclidean_distance(p1, p2):
-    """Bonus: straight-line distance between two landmark points (2D)."""
+    """
+    Bonus: straight-line distance between two landmark points, using
+    their normalized (x, y) coordinates. z is left out here since the
+    task only asks for thumb tip vs index tip distance, and 2D is
+    simpler to reason about while we don't yet know what this feature
+    will be used for.
+    """
     return ((p1["x"] - p2["x"]) ** 2 + (p1["y"] - p2["y"]) ** 2) ** 0.5
 
 
@@ -91,7 +104,11 @@ def main():
         print(f"[!] {e}")
         return
 
-    detector = HandLandmarkDetector(
+    mp_hands = mp.solutions.hands
+    mp_drawing = mp.solutions.drawing_utils
+    mp_drawing_styles = mp.solutions.drawing_styles
+
+    hands = mp_hands.Hands(
         static_image_mode=False,
         max_num_hands=2,
         min_detection_confidence=0.5,
@@ -102,7 +119,7 @@ def main():
     project_root = Path(__file__).resolve().parent.parent.parent.parent.parent
     captures_dir = project_root / "captures"
 
-    print("Webcam + HandLandmarkDetector started.")
+    print("Webcam + MediaPipe Hands started.")
     print("Controls: Q = quit | P = print landmarks | S = save landmarks")
 
     window_name = "Hand Tracking - Press Q to quit"
@@ -117,6 +134,7 @@ def main():
     distance_color = (255, 200, 0)
     thickness = 2
 
+    # THUMB_TIP = landmark 4, INDEX_FINGER_TIP = landmark 8
     THUMB_TIP_ID = 4
     INDEX_TIP_ID = 8
 
@@ -128,22 +146,33 @@ def main():
                 print("[!] Failed to read frame from webcam. Stopping.")
                 break
 
+            # --- FPS ---
             current_frame_time = time.time()
             time_diff = current_frame_time - prev_frame_time
             fps = 1.0 / time_diff if time_diff > 0 else 0.0
             prev_frame_time = current_frame_time
 
-            multi_hand_landmarks = detector.process(frame)
+            # --- Hand detection ---
+            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            results = hands.process(rgb_frame)
 
             num_hands = 0
-            all_hands_landmarks = []
+            all_hands_landmarks = []  # Task 5 data, refreshed every frame
 
-            if multi_hand_landmarks:
-                num_hands = len(multi_hand_landmarks)
-                for hand_landmarks in multi_hand_landmarks:
-                    detector.draw_landmarks(frame, hand_landmarks)
-                    all_hands_landmarks.append(landmarks_to_dicts(hand_landmarks))
+            if results.multi_hand_landmarks:
+                num_hands = len(results.multi_hand_landmarks)
 
+                for hand_landmarks in results.multi_hand_landmarks:
+                    mp_drawing.draw_landmarks(
+                        frame,
+                        hand_landmarks,
+                        mp_hands.HAND_CONNECTIONS,
+                        mp_drawing_styles.get_default_hand_landmarks_style(),
+                        mp_drawing_styles.get_default_hand_connections_style(),
+                    )
+                    all_hands_landmarks.append(extract_landmarks(hand_landmarks))
+
+            # --- Overlay: FPS + hand count ---
             cv2.putText(frame, f"FPS: {int(fps)}", (10, 30),
                         font, 1, text_color, thickness)
 
@@ -154,10 +183,12 @@ def main():
                 cv2.putText(frame, "No Hand Detected", (10, 65),
                             font, 1, warning_color, thickness)
 
+            # --- Bonus: live thumb-index distance, per detected hand ---
             for i, landmarks in enumerate(all_hands_landmarks):
                 thumb_tip = landmarks[THUMB_TIP_ID]
                 index_tip = landmarks[INDEX_TIP_ID]
                 distance = euclidean_distance(thumb_tip, index_tip)
+
                 cv2.putText(
                     frame,
                     f"Hand {i + 1} pinch distance: {distance:.3f}",
@@ -186,7 +217,7 @@ def main():
                 else:
                     print("[i] 'S' pressed but no hand currently detected - nothing saved.")
 
-    detector.close()
+    hands.close()
     cv2.destroyAllWindows()
 
 
